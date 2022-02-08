@@ -1,17 +1,6 @@
-use nom::{
-    branch::alt,
-    bytes::complete::tag,
-    character::{
-        complete::{alpha1, alphanumeric1, multispace0},
-        streaming::char,
-    },
-    combinator::{opt, recognize},
-    multi::many0,
-    sequence::pair,
-    IResult,
-};
+use nom::{error::ParseError, multi::fold_many0, IResult};
 
-use crate::parser::parse_string;
+use crate::lexer::{Lexical, LexicalSlice};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
@@ -19,7 +8,7 @@ pub struct Interface {
     pub methods: Vec<Method>,
 }
 impl Interface {
-    pub fn parse(input: &str) -> IResult<&str, Interface> {
+    pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Interface> {
         entity("interface", input, |input, name| {
             let (input, methods) = Method::parse_multi(input)?;
 
@@ -39,7 +28,7 @@ pub struct Class {
     pub methods: Vec<Method>,
 }
 impl Class {
-    pub fn parse(input: &str) -> IResult<&str, Class> {
+    pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Class> {
         entity("class", input, |input, name| {
             let (input, methods) = Method::parse_multi(input)?;
 
@@ -59,10 +48,10 @@ pub struct Enumeration {
     pub variants: Vec<String>,
 }
 impl Enumeration {
-    pub fn parse(input: &str) -> IResult<&str, Enumeration> {
+    pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Enumeration> {
         entity("enum", input, |input, name| {
             let (input, variants) = comma_separated(input, |input| {
-                let (input, variant) = identifier(input)?;
+                let (input, variant) = input.identifier()?;
                 Ok((input, variant.to_string()))
             })?;
 
@@ -84,18 +73,17 @@ pub struct Method {
     pub args: Vec<Argument>,
 }
 impl Method {
-    pub fn parse(input: &str) -> IResult<&str, Method> {
-        let (input, _) = multispace0(input)?;
-        let (input, is_static) = opt(tag("static"))(input)?;
-        let is_static = is_static.is_some();
-        let (input, _) = multispace0(input)?;
-        let (input, name) = identifier(input)?;
-
-        let (input, _) = char('(')(input)?;
+    pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Method> {
+        let (input, is_static) = match input.identifier() {
+            Ok((input, "static")) => (input, true),
+            _ => (input, false),
+        };
+        let (input, name) = input.identifier()?;
+        let (input, _) = input.lparen()?;
         let (input, args) = comma_separated(input, Self::parse_argument)?;
-        let (input, _) = char(')')(input)?;
+        let (input, _) = input.rparen()?;
         let (input, ret) = Self::parse_type(input)?;
-        let (input, _) = char(';')(input)?;
+        let (input, _) = input.semicolon()?;
 
         let r = Method {
             name: name.to_string(),
@@ -107,44 +95,28 @@ impl Method {
         Ok((input, r))
     }
 
-    pub fn parse_multi(input: &str) -> IResult<&str, Vec<Method>> {
-        let mut methods = vec![];
-        let (input, _) = Self::parse_multi_recursive(input, &mut methods)?;
-        Ok((input, methods))
+    pub fn parse_multi(input: &[Lexical]) -> IResult<&[Lexical], Vec<Method>> {
+        fold_many0(Self::parse, Vec::new, |mut result, method| {
+            result.push(method);
+            result
+        })(input)
     }
 
-    fn parse_multi_recursive<'a>(
-        input: &'a str,
-        methods: &mut Vec<Method>,
-    ) -> IResult<&'a str, ()> {
-        let (input, method) = match Self::parse(input) {
-            Ok(x) => x,
-            Err(_) => return Ok((input, ())),
-        };
-        methods.push(method);
-
-        Self::parse_multi_recursive(input, methods)
-    }
-
-    fn parse_argument(input: &str) -> IResult<&str, Argument> {
-        let (input, _) = multispace0(input)?;
-        let (input, name) = identifier(input)?;
+    fn parse_argument(input: &[Lexical]) -> IResult<&[Lexical], Argument> {
+        let (input, name) = input.identifier()?;
         let (input, ret) = Self::parse_type(input)?;
 
         let r = Argument(name.to_string(), ret);
         Ok((input, r))
     }
 
-    fn parse_type(input: &str) -> IResult<&str, Type> {
-        let (input, _) = multispace0(input)?;
-        let (input, ret_separator) = opt(char(':'))(input)?;
-        let (input, _) = multispace0(input)?;
-        let (input, ret) = match ret_separator {
-            Some(_) => {
-                let (input, ret) = identifier(input)?;
+    fn parse_type(input: &[Lexical]) -> IResult<&[Lexical], Type> {
+        let (input, ret) = match input.colon() {
+            Ok((input, _)) => {
+                let (input, ret) = input.identifier()?;
                 (input, Some(ret))
             }
-            None => (input, None),
+            _ => (input, None),
         };
         let ret = Type(ret.map(|x| x.to_owned()));
 
@@ -161,10 +133,9 @@ pub struct Argument(String, Type);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constant(String, String);
 impl Constant {
-    pub fn parse(input: &str) -> IResult<&str, Constant> {
+    pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Constant> {
         entity("constant", input, |input, name| {
-            let (input, _) = multispace0(input)?;
-            let (input, value) = parse_string(input)?;
+            let (input, value) = input.string()?;
             let r = Constant(name.to_string(), value);
 
             Ok((input, r))
@@ -172,64 +143,55 @@ impl Constant {
     }
 }
 
-fn entity<'a, T, F: FnOnce(&'a str, &'a str) -> IResult<&'a str, T>>(
+fn entity<'a, T, F: FnOnce(&'a [Lexical], &'a str) -> IResult<&'a [Lexical], T>>(
     entity: &str,
-    input: &'a str,
+    input: &'a [Lexical],
     f: F,
-) -> IResult<&'a str, T> {
-    let (input, _) = multispace0(input)?;
-    let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('=')(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag(entity)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('{')(input)?;
+) -> IResult<&'a [Lexical], T> {
+    let (input, name) = input.identifier()?;
+    let (input, _) = input.equals()?;
+    let (input, entity_type) = input.identifier()?;
 
+    if entity_type != entity {
+        return Err(nom::Err::Failure(nom::error::Error::from_error_kind(
+            input,
+            nom::error::ErrorKind::IsNot,
+        )));
+    }
+
+    let (input, _) = input.lbracket()?;
     let (input, r) = f(input, name)?;
-
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('}')(input)?;
+    let (input, _) = input.rbracket()?;
 
     Ok((input, r))
 }
 
-fn identifier(input: &str) -> IResult<&str, &str> {
-    recognize(pair(
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_")))),
-    ))(input)
-}
-
-fn comma_separated<'a, T, F: FnMut(&'a str) -> IResult<&'a str, T>>(
-    input: &'a str,
+fn comma_separated<'a, T, F: FnMut(&'a [Lexical]) -> IResult<&'a [Lexical], T>>(
+    input: &'a [Lexical],
     f: F,
-) -> IResult<&'a str, Vec<T>> {
-    let mut result = vec![];
-    //FIXME tail recursion
-    let (input, _) = comma_separated_recurse(input, f, &mut result)?;
-    Ok((input, result))
+) -> IResult<&'a [Lexical], Vec<T>> {
+    comma_separated_recurse(input, f, vec![])
 }
 
-fn comma_separated_recurse<'a, T, F: FnMut(&'a str) -> IResult<&'a str, T>>(
-    input: &'a str,
+fn comma_separated_recurse<'a, T, F: FnMut(&'a [Lexical]) -> IResult<&'a [Lexical], T>>(
+    input: &'a [Lexical],
     mut f: F,
-    result: &mut Vec<T>,
-) -> IResult<&'a str, ()> {
-    let (input, _) = multispace0(input)?;
+    mut result: Vec<T>,
+) -> IResult<&'a [Lexical], Vec<T>> {
     let (input, one) = match f(input) {
         Ok(x) => x,
-        Err(_) => return Ok((input, ())),
+        Err(_) => return Ok((input, result)),
     };
     result.push(one);
-    let (input, _) = multispace0(input)?;
-    let (input, comma) = opt(char(','))(input)?;
-    let comma = comma.is_some();
+    let (input, comma) = match input.comma() {
+        Ok((input, _)) => (input, true),
+        _ => (input, false),
+    };
 
     if comma {
         comma_separated_recurse(input, f, result)
     } else {
-        Ok((input, ()))
+        Ok((input, result))
     }
 }
 
@@ -239,15 +201,16 @@ pub mod tests {
 
     #[test]
     fn interface() {
-        let interface = Interface::parse(
+        let input = Lexical::parse_all(
             "
-            Xis_Thing = interface {
-                method_one();
-            }
-        ",
+                Xis_Thing = interface {
+                    method_one();
+                }
+            ",
         )
         .unwrap()
         .1;
+        let interface = Interface::parse(&input).unwrap().1;
 
         assert_eq!(
             interface,
@@ -265,15 +228,16 @@ pub mod tests {
 
     #[test]
     fn class() {
-        let class = Class::parse(
+        let input = Lexical::parse_all(
             "
-            Class_Thing = class {
-                method_one();
-            }
-            ",
+        Class_Thing = class {
+            method_one();
+        }
+        ",
         )
         .unwrap()
         .1;
+        let class = Class::parse(&input).unwrap().1;
 
         assert_eq!(
             class,
@@ -291,16 +255,17 @@ pub mod tests {
 
     #[test]
     fn enumeration() {
-        let enumeration = Enumeration::parse(
+        let input = Lexical::parse_all(
             "
-            Enum_eration = enum {
-                One,
-                Two
-            }
-            ",
+        Enum_eration = enum {
+            One,
+            Two
+        }
+        ",
         )
         .unwrap()
         .1;
+        let enumeration = Enumeration::parse(&input).unwrap().1;
 
         assert_eq!(
             enumeration,
@@ -310,7 +275,8 @@ pub mod tests {
             }
         );
 
-        let enumeration = Enumeration::parse("Empty = enum {}").unwrap().1;
+        let input = Lexical::parse_all("Empty = enum {}").unwrap().1;
+        let enumeration = Enumeration::parse(&input).unwrap().1;
         assert_eq!(
             enumeration,
             Enumeration {
@@ -322,7 +288,8 @@ pub mod tests {
 
     #[test]
     fn method() {
-        let method = Method::parse("faz(): i32;").unwrap().1;
+        let input = Lexical::parse_all("faz(): i32;").unwrap().1;
+        let method = Method::parse(&input).unwrap().1;
 
         assert_eq!(
             method,
@@ -334,7 +301,8 @@ pub mod tests {
             }
         );
 
-        let method = Method::parse("faz(a: i32, b: u32, c);").unwrap().1;
+        let input = Lexical::parse_all("faz(a: i32, b: u32, c);").unwrap().1;
+        let method = Method::parse(&input).unwrap().1;
         assert_eq!(
             method,
             Method {
@@ -349,7 +317,8 @@ pub mod tests {
             }
         );
 
-        let method = Method::parse("static faz();").unwrap().1;
+        let input = Lexical::parse_all("static faz();").unwrap().1;
+        let method = Method::parse(&input).unwrap().1;
         assert_eq!(
             method,
             Method {
@@ -363,9 +332,10 @@ pub mod tests {
 
     #[test]
     fn constants() {
-        let constant = Constant::parse(r#"name = constant { "hel\"lo" } "#)
+        let input = Lexical::parse_all(r#"name = constant { "hel\"lo" } "#)
             .unwrap()
             .1;
+        let constant = Constant::parse(&input).unwrap().1;
 
         assert_eq!(
             constant,
