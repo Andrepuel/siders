@@ -1,0 +1,9 @@
+MyClass = class {
+    static create(): MyClass;
+    doit(): i32;
+    get(): Thing;
+}
+
+Thing = class {
+    doit(class: MyClass);
+}
