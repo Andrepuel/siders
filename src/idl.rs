@@ -1,6 +1,31 @@
-use nom::{error::ParseError, multi::fold_many0, IResult};
+use nom::{branch::alt, combinator::map, error::ParseError, multi::fold_many0, IResult};
 
 use crate::lexer::{Lexical, LexicalSlice};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entity {
+    Interface(Interface),
+    Class(Class),
+    Enumeration(Enumeration),
+    Constant(Constant),
+}
+impl Entity {
+    pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Entity> {
+        alt((
+            map(Interface::parse, Entity::Interface),
+            map(Class::parse, Entity::Class),
+            map(Enumeration::parse, Entity::Enumeration),
+            map(Constant::parse, Entity::Constant),
+        ))(input)
+    }
+
+    pub fn parse_all(input: &[Lexical]) -> IResult<&[Lexical], Vec<Entity>> {
+        fold_many0(Self::parse, Vec::new, |mut result, entity| {
+            result.push(entity);
+            result
+        })(input)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
@@ -125,13 +150,13 @@ impl Method {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct Type(Option<String>);
+pub struct Type(pub Option<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Argument(String, Type);
+pub struct Argument(pub String, pub Type);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Constant(String, String);
+pub struct Constant(pub String, pub String);
 impl Constant {
     pub fn parse(input: &[Lexical]) -> IResult<&[Lexical], Constant> {
         entity("constant", input, |input, name| {
@@ -153,7 +178,7 @@ fn entity<'a, T, F: FnOnce(&'a [Lexical], &'a str) -> IResult<&'a [Lexical], T>>
     let (input, entity_type) = input.identifier()?;
 
     if entity_type != entity {
-        return Err(nom::Err::Failure(nom::error::Error::from_error_kind(
+        return Err(nom::Err::Error(nom::error::Error::from_error_kind(
             input,
             nom::error::ErrorKind::IsNot,
         )));
@@ -340,6 +365,41 @@ pub mod tests {
         assert_eq!(
             constant,
             Constant("name".to_string(), r#"hel"lo"#.to_string())
+        );
+    }
+
+    #[test]
+    fn entity() {
+        let input = Lexical::parse_all(
+            r#"
+            a_class = class {}
+            a_interface = interface {}
+            a_enum = enum {}
+            a_constant = constant { "" }
+            "#,
+        )
+        .unwrap()
+        .1;
+
+        let entities = Entity::parse_all(&input).unwrap().1;
+
+        assert_eq!(
+            entities,
+            vec![
+                Entity::Class(Class {
+                    name: "a_class".to_string(),
+                    methods: Default::default(),
+                }),
+                Entity::Interface(Interface {
+                    name: "a_interface".to_string(),
+                    methods: Default::default()
+                }),
+                Entity::Enumeration(Enumeration {
+                    name: "a_enum".to_string(),
+                    variants: Default::default()
+                }),
+                Entity::Constant(Constant("a_constant".to_string(), Default::default()))
+            ]
         );
     }
 }

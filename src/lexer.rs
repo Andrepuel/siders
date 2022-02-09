@@ -6,7 +6,7 @@ use nom::{
     error::{self, Error, ParseError},
     multi::{fold_many0, many0},
     sequence::pair,
-    IResult, Needed,
+    IResult,
 };
 
 use crate::parser::parse_string;
@@ -54,7 +54,10 @@ pub trait LexicalSlice<'a>: Into<&'a [Lexical]> {
     fn first(self) -> IResult<&'a [Lexical], &'a Lexical> {
         let input = self.into();
         if input.is_empty() {
-            return Err(nom::Err::Incomplete(Needed::new(1)));
+            return Err(nom::Err::Error(Error::from_error_kind(
+                input,
+                error::ErrorKind::Eof,
+            )));
         }
 
         let (token, input) = input.split_at(1);
