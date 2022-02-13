@@ -7,3 +7,8 @@ MyClass = class {
 Thing = class {
     doit(class: MyClass);
 }
+
+MyInterface = interface {
+    look();
+    iHaveVtable(): MyClass;
+}

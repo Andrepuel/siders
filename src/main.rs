@@ -2,7 +2,7 @@ use std::io::Read;
 
 use nameless::InputByteStream;
 use siders::{
-    code::{c, Code},
+    code::{c, DynCode},
     idl::Entity,
     lexer::Lexical,
 };
@@ -16,10 +16,14 @@ fn main(mut input_stream: InputByteStream) {
     let entities = Entity::parse_all(&input).unwrap().1;
 
     for entity in entities {
-        if let Entity::Class(class) = entity {
-            println!("// {}.h", class.name);
-            println!("{}", c::Header(class.name.clone(), c::Class(class)).code());
-            println!();
-        }
+        let (name, code): (String, Box<dyn DynCode>) = match entity {
+            Entity::Interface(x) => (x.name.clone(), Box::new(c::Interface(x))),
+            Entity::Class(x) => (x.name.clone(), Box::new(c::Class(x))),
+            _ => continue,
+        };
+
+        println!("// {}.h", name);
+        println!("{}", c::Header(name, code).dyn_code());
+        println!();
     }
 }
