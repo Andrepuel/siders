@@ -36,7 +36,7 @@ impl From<idl::Type> for Type {
             Some("i64") => Type::Primitive("i64"),
             Some("size") => Type::Primitive("size"),
             Some("bool") => Type::Primitive("bool"),
-            Some(x) => Type::Complex(x.to_string()),
+            Some(x) => Type::Complex(format!("{x}_t")),
         }
     }
 }
@@ -143,6 +143,12 @@ impl<'a> From<&'a idl::Class> for TypeStub {
         TypeStub(class.name.clone())
     }
 }
+impl TypeStub {
+    pub fn from_complex(name: &str) -> Self {
+        assert!(name.ends_with("_t"));
+        Self(name[0..name.len() - 2].to_string())
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Class(pub idl::Class);
@@ -156,10 +162,11 @@ impl Class {
         self.idl_dependencies()
             .map(|x| Type::from(x.clone()))
             .filter_map(|x| match x {
-                Type::Complex(name) if name != self.0.name => Some(name),
+                Type::Complex(name) => Some(name),
                 _ => None,
             })
-            .map(TypeStub)
+            .map(|x| TypeStub::from_complex(&x))
+            .filter(|x| x.0 != self.0.name)
             .collect()
     }
 
@@ -215,7 +222,7 @@ pub mod tests {
 
         assert_eq!(
             Type::from(idl::Type(Some("Complex".to_string()))),
-            Type::Complex("Complex".to_string())
+            Type::Complex("Complex_t".to_string())
         );
     }
 
