@@ -276,11 +276,23 @@ impl Class {
     }
 
     pub fn methods(&self) -> Vec<Function> {
-        self.0
-            .methods
-            .iter()
-            .map(|method| Function::from((&self.0, method)))
-            .collect()
+        [Function::from((
+            &self.0,
+            &idl::Method {
+                name: "destruct".to_string(),
+                ret: idl::Type(None),
+                args: vec![],
+                is_static: false,
+            },
+        ))]
+        .into_iter()
+        .chain(
+            self.0
+                .methods
+                .iter()
+                .map(|method| Function::from((&self.0, method))),
+        )
+        .collect()
     }
 }
 impl HasDependencies for Class {
@@ -309,17 +321,21 @@ impl Vtable {
     fn structure(&self) -> Structure {
         Structure {
             name: self.type_stub().name(),
-            attributes: self
-                .0
-                .methods
-                .iter()
-                .map(|method| {
-                    Argument(
-                        method.name.clone(),
-                        Function::from((&self.0, method)).nameless().into(),
-                    )
-                })
-                .collect(),
+            attributes: [idl::Method {
+                name: "destruct".to_string(),
+                ret: idl::Type(None),
+                is_static: false,
+                args: vec![],
+            }]
+            .iter()
+            .chain(self.0.methods.iter())
+            .map(|method| {
+                Argument(
+                    method.name.clone(),
+                    Function::from((&self.0, method)).nameless().into(),
+                )
+            })
+            .collect(),
         }
     }
 }
@@ -599,14 +615,24 @@ pub mod tests {
         assert_eq!(class.stub(), TypeStub("MyClass".to_string()));
         assert_eq!(
             class.methods(),
-            vec![Function {
-                name: "MyClass_doit".to_string(),
-                ret: Type::Void,
-                args: vec![Argument(
-                    "self".to_string(),
-                    Type::Complex("MyClass_t".to_string())
-                )]
-            }]
+            vec![
+                Function {
+                    name: "MyClass_destruct".to_string(),
+                    ret: Type::Void,
+                    args: vec![Argument(
+                        "self".to_string(),
+                        Type::Complex("MyClass_t".to_string()),
+                    )]
+                },
+                Function {
+                    name: "MyClass_doit".to_string(),
+                    ret: Type::Void,
+                    args: vec![Argument(
+                        "self".to_string(),
+                        Type::Complex("MyClass_t".to_string())
+                    )]
+                }
+            ]
         );
     }
 
@@ -687,18 +713,32 @@ pub mod tests {
             vtable.structure(),
             Structure {
                 name: "MyInterface_vtable".to_string(),
-                attributes: vec![Argument(
-                    "doit".to_string(),
-                    Function {
-                        name: Default::default(),
-                        ret: Type::Void,
-                        args: vec![Argument(
-                            "self".to_string(),
-                            Type::Complex("MyInterface_t".to_string())
-                        )],
-                    }
-                    .into()
-                )]
+                attributes: vec![
+                    Argument(
+                        "destruct".to_string(),
+                        Function {
+                            name: Default::default(),
+                            ret: Type::Void,
+                            args: vec![Argument(
+                                "self".to_string(),
+                                Type::Complex("MyInterface_t".to_string()),
+                            )]
+                        }
+                        .into()
+                    ),
+                    Argument(
+                        "doit".to_string(),
+                        Function {
+                            name: Default::default(),
+                            ret: Type::Void,
+                            args: vec![Argument(
+                                "self".to_string(),
+                                Type::Complex("MyInterface_t".to_string())
+                            )],
+                        }
+                        .into()
+                    )
+                ]
             }
         );
 
