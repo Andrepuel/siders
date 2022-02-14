@@ -1,0 +1,7 @@
+Main = class {
+    static run(a: Provider);
+}
+
+Provider = interface {
+    print(ascii: i8);
+}
