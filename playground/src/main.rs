@@ -1,7 +1,5 @@
 use lazy_static::lazy_static;
-use main_sys::{Main_run, Provider_t};
-
-use crate::main_sys::Provider_vtable_t;
+use main_sys::{Main_run, Main_set, Provider_t, Provider_vtable_t};
 
 pub mod main_sys;
 
@@ -26,31 +24,31 @@ fn create_vtable() -> Provider_vtable_t {
 pub struct ProviderBox {
     _siders_super: Provider_t,
     _siders_self: Box<dyn Provider>,
-    dbg: usize,
 }
-impl From<Box<dyn Provider>> for Box<ProviderBox> {
+impl From<Box<dyn Provider>> for *mut Provider_t {
     fn from(self_: Box<dyn Provider>) -> Self {
         lazy_static! {
             static ref VTABLE: Provider_vtable_t = create_vtable();
         }
         let vtable: &'static Provider_vtable_t = &VTABLE;
 
-        Box::new(ProviderBox {
+        Box::into_raw(Box::new(ProviderBox {
             _siders_super: Provider_t {
                 _siders_vtable: vtable as *const _ as *mut _,
             },
             _siders_self: self_,
-            dbg: 42,
-        })
+        })) as *mut Provider_t
     }
 }
 
 pub struct Main {}
 impl Main {
-    fn run(provider: Box<dyn Provider>) {
-        let provider: Box<ProviderBox> = provider.into();
-        let provider: *mut ProviderBox = Box::into_raw(provider);
-        unsafe { Main_run(&mut (*provider)._siders_super) }
+    fn set(provider: Box<dyn Provider>) {
+        unsafe { Main_set(provider.into()) }
+    }
+
+    fn run() {
+        unsafe { Main_run() }
     }
 }
 
@@ -70,5 +68,6 @@ impl Provider for MyProvider {
 }
 
 fn main() {
-    Main::run(Box::new(MyProvider()));
+    Main::set(Box::new(MyProvider()));
+    Main::run();
 }
